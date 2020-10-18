@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-webapp # Name of our app
+  namespace: test
+  labels:
+    app: test-webapp
+spec:
+#  replicas: 2-4 - It's enough for HA implementation but we used HPA
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        maintainer: rasdva3
+        app: test_web_app
+    spec:
+      # Assign Pods in several different availability zones
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - webapp
+            topologyKey: "failure-domain.beta.kubernetes.io/zone"
+      # Using myself private registry (just a paranoid approach)
+      imagePullSecrets:
+      - name: registrysecret
+      containers:
+      - name: web_app
+        image: registry.test.com/test_web_app:v1.0
+        resources:
+        # Guaranteed QoS class (request resources equals limits and may not specify)
+        #requests:
+        #  cpu: "100m"
+        #  memory: "130Mi"
+        limits:
+          cpu: 100m
+          memory: 130Mi
+        # test webapp to ready - 10s
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 7000
+          initialDelaySeconds: 10
+        # test webapp to live or not
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: 7000
+          initialDelaySeconds: 12
+          periodSeconds: 5
+        # some random port
+        ports:
+        - containerPort: 7000
+---
+# Autoscale emplementation
+apiVersion: autoscaling/v2beta1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: test-webapp-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: test-webapp-deploy
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      targetAverageUtilization: 80
